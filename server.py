@@ -44,6 +44,7 @@ class NvimConnection:
         """Connect to the Neovim socket"""
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.sock.connect(self.socket_path)
+        self.sock.settimeout(1)  # Set a timeout of 5 seconds
         return self
 
     def close(self):
@@ -68,22 +69,31 @@ class NvimConnection:
 
         # Read response
         data = b""
+        chunk_idx = 0
         while True:
-            chunk = self.sock.recv(4096)
+            logger.debug("Reading chunk %d", chunk_idx)
+            chunk_idx += 1
+            try:
+                chunk = self.sock.recv(4096)
+            except socket.timeout:
+                logger.error("Socket recv timed out")
+                break
             logger.debug(f"Received chunk {chunk}")
             if not chunk:
                 break
             data += chunk
-            try:
-                # Try to unpack - if it works, we have a complete message
-                full_response = msgpack.unpackb(data, raw=False)
-                response = full_response[3]
-                return response
-            except msgpack.exceptions.OutOfData:
-                # Need more data
-                continue
-            finally:
-                logger.debug("Response from neovim: %s", full_response)
+
+        try:
+            # Try to unpack - if it works, we have a complete message
+            full_response = msgpack.unpackb(data, raw=False)
+            response = full_response[3]
+            return response
+        except msgpack.exceptions.OutOfData:
+            # Need more data
+            logger.debug("Need more data, waiting for more chunks")
+            raise
+            # finally:
+            #     logger.debug("Response from neovim: %s", full_response)
 
     def execute_command(self, cmd):
         """Execute a Vim command"""
@@ -93,9 +103,12 @@ class NvimConnection:
         """Evaluate a Vim expression"""
         return self._send_request("nvim_eval", [expr])
 
-    def get_current_buffer(self):
+    def get_current_buffer(self) -> int:
         """Get the current buffer number"""
-        return self._send_request("nvim_get_current_buf", [])
+        buffer_id = self._send_request("nvim_get_current_buf", [])
+        if isinstance(buffer_id, msgpack.ExtType):
+            buffer_id = int.from_bytes(buffer_id.data, byteorder="big")
+        return buffer_id
 
     def get_buffer_lines(self, buffer_id, start, end):
         """Get lines from a buffer"""
@@ -195,9 +208,8 @@ def insert_response(ctx: Context, message: list[str]):
 @server.tool()
 def read_buffer(ctx: Context):
     nvim: NvimConnection = ctx.request_context.lifespan_context.nvim
-    buffer_info = nvim.get_current_buffer()
-    buffer_id = int.from_bytes(buffer_info.data)
-    logger.debug(f"Buffer {buffer_id} info {buffer_info}")
+    buffer_id = nvim.get_current_buffer()
+    logger.info(f"Reading buffer {buffer_id}")
     result = nvim.get_buffer_lines(buffer_id, 0, -1)
     result = "\n".join(result)
     logger.debug(f"Buffer content: {result}")
@@ -215,8 +227,17 @@ def read_selected_text(ctx: Context) -> str:
     if start is None or end is None:
         return ""
     buffer_id = nvim.get_current_buffer()
-    logger.debug(f"Reading selection from buffer id {buffer_id[0]} {start}:{end}")
-    result = nvim.get_buffer_lines(buffer_id[0], start, end)
+    logger.debug(f"Reading selection from buffer id {buffer_id} {start}:{end}")
+    result = nvim.get_buffer_lines(buffer_id, start, end)
     result = "\n".join(result)
     logger.debug("This is the result from read_selected_text: %s", result)
     return result
+
+
+@server.tool()
+def get_current_buffer_id(ctx: Context) -> int:
+    """Get the current buffer ID."""
+    nvim: NvimConnection = ctx.request_context.lifespan_context.nvim
+    buffer_id = nvim.get_current_buffer()
+    logger.debug(f"Current buffer ID: {buffer_id}")
+    return buffer_id
