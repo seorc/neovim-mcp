@@ -3,6 +3,7 @@ import msgpack
 import socket
 import os
 import random
+from pathlib import Path
 
 from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
@@ -17,9 +18,10 @@ logger.setLevel(level=logging.DEBUG)
 class NvimConnection:
     """A minimal, synchronous connection to Neovim avoiding event loops"""
 
-    def __init__(self, socket_path=None):
-        self.socket_path = socket_path or self._find_socket()
+    def __init__(self, socket_name: str = "neovim.socket"):
         self.sock = None
+        self.socket_path = ""
+        self.socket_name = socket_name
         self.request_id = random.randint(1, 10000)
 
     def _find_socket(self):
@@ -40,6 +42,9 @@ class NvimConnection:
             "No Neovim socket found. Start Neovim with --listen option."
         )
 
+    def set_socket_path(self, path: str):
+        self.socket_path = str(Path(path) / self.socket_name)
+
     def connect(self):
         """Connect to the Neovim socket"""
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -49,6 +54,9 @@ class NvimConnection:
 
     def close(self):
         """Close the connection"""
+        if not self.socket_path:
+            raise Exception("You must initialize the path")
+
         if self.sock:
             self.sock.close()
             self.sock = None
@@ -154,8 +162,6 @@ class NvimConnection:
 
             return (start_line, end_line)
         except Exception as e:
-            print(f"Debug - start_pos: {cursor_pos}")
-            print(f"Debug - end_pos: {visual_end_pos}")
             raise RuntimeError(f"Error getting visual selection: {str(e)}")
 
 
@@ -168,7 +174,7 @@ class AppContext:
 async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
     """Manage application lifecycle with type-safe context"""
     # Initialize on startup
-    nvim = NvimConnection(socket_path="/tmp/neovim")
+    nvim = NvimConnection()
     logger.debug("Creating lifespan objects")
     try:
         # nvim = attach("socket", path="/tmp/neovim")
@@ -184,9 +190,16 @@ server = FastMCP("neovim", lifespan=app_lifespan)
 
 
 @server.tool()
-def add(a: int, b: int) -> int:
-    """Add two numbers"""
-    return a + b
+def initialize_neovim_connection(ctx: Context, path: str) -> str:
+    """Initialize the project path.
+
+    You must use this tool if you see an error indicating that you must initialize the path or that the socket is not connected.
+
+    The path must be provided to you by the user as PROJECT_PATH. If not, just skip using any other neovim tools until it si provided to you.
+    """
+    nvim: NvimConnection = ctx.request_context.lifespan_context.nvim
+    nvim.set_socket_path(path)
+    return f"Neovim configured correctly at {path}"
 
 
 @server.resource("greeting://{name}")
