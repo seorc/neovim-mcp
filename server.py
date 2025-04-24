@@ -20,30 +20,20 @@ class NvimConnection:
 
     def __init__(self, socket_name: str = "neovim.socket"):
         self.sock = None
+        self.project_dir = ""  # Store the project directory
         self.socket_path = ""
         self.socket_name = socket_name
         self.request_id = random.randint(1, 10000)
 
-    def _find_socket(self):
-        """Find a valid Neovim socket path"""
-        # Try environment variable first
-        socket_path = os.environ.get("NVIM_LISTEN_ADDRESS")
-        if socket_path and os.path.exists(socket_path):
-            return socket_path
-
-        # Common socket locations
-        paths = ["/tmp/nvim.sock", "/tmp/nvimsocket", "/tmp/nvim/nvim.sock"]
-
-        for path in paths:
-            if os.path.exists(path):
-                return path
+    def set_socket_path(self, path: str):
+        self.project_dir = path  # Store the project directory
+        self.socket_path = str(Path(path) / self.socket_name)
+        if os.path.exists(self.socket_path):
+            return path
 
         raise FileNotFoundError(
             "No Neovim socket found. Start Neovim with --listen option."
         )
-
-    def set_socket_path(self, path: str):
-        self.socket_path = str(Path(path) / self.socket_name)
 
     def connect(self):
         """Connect to the Neovim socket"""
@@ -490,34 +480,18 @@ def get_project_tree(ctx: Context) -> str:
         String output of the git ls-tree command showing file modes, types, SHAs, sizes and paths
     """
     import subprocess
-    import os
-    import pathlib
 
     nvim: NvimConnection = ctx.request_context.lifespan_context.nvim
 
     try:
-        # Get the directory of the current buffer
-        buffer_id = nvim.get_current_buffer()
-        buffer_name = nvim.eval_expr(f"bufname({buffer_id})")
+        # Use the project directory that's already stored in the connection
+        if not nvim.project_dir:
+            return "Error: Project directory not initialized. Use initialize_neovim_connection first."
 
-        if not buffer_name:
-            logger.warning("Current buffer has no name or path")
-            # Default to current working directory
-            cwd = os.getcwd()
-        else:
-            # Get the directory containing the buffer file
-            buffer_path = pathlib.Path(buffer_name)
-            # If it's an absolute path, use its directory
-            if buffer_path.is_absolute():
-                cwd = str(buffer_path.parent)
-            else:
-                # For relative paths, join with current directory
-                abs_path = pathlib.Path(os.getcwd()) / buffer_path
-                cwd = str(abs_path.parent)
+        cwd = nvim.project_dir
+        logger.debug(f"Running git command in project directory: {cwd}")
 
-        logger.debug(f"Running git command in directory: {cwd}")
-
-        # Execute the git ls-tree command in the buffer's directory
+        # Execute the git ls-tree command in the project directory
         process = subprocess.Popen(
             ["git", "ls-tree", "-r", "-l", "HEAD"],
             stdout=subprocess.PIPE,
