@@ -3,6 +3,8 @@ import msgpack
 import socket
 import os
 import random
+import shutil
+import re
 from pathlib import Path
 
 from contextlib import asynccontextmanager
@@ -24,6 +26,9 @@ class NvimConnection:
         self.socket_path = ""
         self.socket_name = socket_name
         self.request_id = random.randint(1, 10000)
+        # Add a flag to track if diff mode is active and store original buffer reference
+        self.diff_active = False
+        self.diff_buffer_id = None
 
     def set_socket_path(self, path: str):
         self.project_dir = path  # Store the project directory
@@ -180,6 +185,31 @@ server = FastMCP("neovim", lifespan=app_lifespan)
 
 
 @server.tool()
+def reset_diff_state(ctx: Context) -> str:
+    """Reset and clean up any active diff views.
+
+    This tool ensures that all diff views are closed and the diff state is reset,
+    useful for cleaning up after multiple update_with_context calls.
+
+    Returns:
+        A message indicating the action taken
+    """
+    nvim: NvimConnection = ctx.request_context.lifespan_context.nvim
+
+    # Turn off diff mode in all windows
+    nvim.execute_command("diffoff!")
+
+    # Close all other windows except the current one
+    nvim.execute_command("only")
+
+    # Reset the diff state
+    nvim.diff_active = False
+    nvim.diff_buffer_id = None
+
+    return "Diff state reset and all diff windows closed"
+
+
+@server.tool()
 def initialize_neovim_connection(ctx: Context, path: str) -> str:
     """Initialize the project path.
 
@@ -194,18 +224,15 @@ def initialize_neovim_connection(ctx: Context, path: str) -> str:
 
 @server.resource("greeting://{name}")
 def get_greeting(name: str) -> str:
-    """Get a personalized greeting"""
-    return f"Hello {name}!"
-
-
-@server.tool()
-def insert_response(ctx: Context, message: list[str]):
-    "Write a message to neovim"
-    logger.debug(f"Writing message to neovim: {message}")
-    nvim: NvimConnection = ctx.request_context.lifespan_context.nvim
-    buff_id = nvim.get_current_buffer()
-    logger.debug(f"Current buffet is {buff_id}")
-    nvim.set_buffer_lines(buff_id[0], 0, 0, message)
+    """Get a personalized greeting randomly chosen from five options"""
+    greetings = [
+        f"Hello {name}!",
+        f"Hi there, {name}!",
+        f"Greetings, {name}!",
+        f"Welcome, {name}!",
+        f"Nice to meet you, {name}!",
+    ]
+    return random.choice(greetings)
 
 
 @server.tool()
@@ -246,179 +273,44 @@ def get_current_buffer_id(ctx: Context) -> int:
     return buffer_id
 
 
-@server.tool()
-def insert_content_at_position(
-    ctx: Context, line: int, column: int, content: str
-) -> str:
-    """Insert content at a specific position in the current buffer.
+# @server.tool()
+# def toggle_diff_mode(ctx: Context, enable: bool = True) -> str:
+#     """Toggle diff mode between current buffer and its previous state.
 
-    Args:
-        line: Line number (0-indexed) where content should be inserted
-        column: Column number (0-indexed) where content should be inserted
-        content: Text content to insert
+#     Args:
+#         enable: True to enable diff mode, False to disable
 
-    Returns:
-        A message indicating success and showing what was inserted
-    """
-    nvim: NvimConnection = ctx.request_context.lifespan_context.nvim
-    buffer_id = nvim.get_current_buffer()
+#     Returns:
+#         A message indicating the action taken
+#     """
+#     nvim: NvimConnection = ctx.request_context.lifespan_context.nvim
 
-    # Get the current line
-    current_line = nvim.get_buffer_lines(buffer_id, line, line + 1)[0]
+#     if enable:
+#         # Create a snapshot of current buffer
+#         buffer_id = nvim.get_current_buffer()
+#         current_lines = nvim.get_buffer_lines(buffer_id, 0, -1)
 
-    # Insert the content at the specified column
-    new_line = current_line[:column] + content + current_line[column:]
+#         # Create a new buffer for comparison
+#         nvim.execute_command("vnew")
+#         temp_buffer_id = nvim.get_current_buffer()
+#         nvim.set_buffer_lines(temp_buffer_id, 0, -1, current_lines)
 
-    # Update the buffer
-    nvim.set_buffer_lines(buffer_id, line, line + 1, [new_line])
+#         # Enable diff mode
+#         nvim.execute_command("diffthis")
+#         nvim.execute_command("wincmd p")  # Go back to previous window
+#         nvim.execute_command("diffthis")
 
-    # Create a diff highlighting using Neovim's built-in diffing capability
-    # First, save the original state in a temp buffer
-    nvim.execute_command("vnew")  # Create a new vertical split
-    temp_buffer_id = nvim.get_current_buffer()
-    nvim.set_buffer_lines(temp_buffer_id, 0, 0, [current_line])
-    nvim.execute_command("diffthis")  # Mark this buffer for diff
+#         # Set the flag and store the diff buffer ID
+#         nvim.diff_active = True
+#         nvim.diff_buffer_id = temp_buffer_id
 
-    # Switch back to original buffer and mark for diff
-    nvim.execute_command("wincmd p")  # Go back to previous window
-    nvim.execute_command("diffthis")  # Mark original buffer for diff
-
-    # Set cursor to the end of inserted content
-    nvim.set_cursor(line + 1, column + len(content))
-
-    return f"Inserted '{content}' at line {line + 1}, column {column + 1}. Diff view enabled."
-
-
-@server.tool()
-def insert_lines_at_position(ctx: Context, line: int, content: list[str]) -> str:
-    """Insert multiple lines at a specific line position in the current buffer.
-
-    Args:
-        line: Line number (0-indexed) where lines should be inserted
-        content: List of text lines to insert
-
-    Returns:
-        A message indicating success and showing what was inserted
-    """
-    nvim: NvimConnection = ctx.request_context.lifespan_context.nvim
-    buffer_id = nvim.get_current_buffer()
-
-    # Get original content for diffing
-    original_lines = nvim.get_buffer_lines(buffer_id, 0, -1)
-
-    # Insert the lines at the specified position
-    nvim.set_buffer_lines(buffer_id, line, line, content)
-
-    # Create a diff highlighting using Neovim's built-in diffing capability
-    # First, save the original state in a temp buffer
-    nvim.execute_command("vnew")  # Create a new vertical split
-    temp_buffer_id = nvim.get_current_buffer()
-    nvim.set_buffer_lines(temp_buffer_id, 0, -1, original_lines)
-    nvim.execute_command("diffthis")  # Mark this buffer for diff
-
-    # Switch back to original buffer and mark for diff
-    nvim.execute_command("wincmd p")  # Go back to previous window
-    nvim.execute_command("diffthis")  # Mark original buffer for diff
-
-    # Set cursor to the beginning of inserted content
-    nvim.set_cursor(line + 1, 0)
-
-    return f"Inserted {len(content)} lines at line {line + 1}. Diff view enabled."
-
-
-@server.tool()
-def replace_text_range(
-    ctx: Context,
-    start_line: int,
-    start_col: int,
-    end_line: int,
-    end_col: int,
-    content: str,
-) -> str:
-    """Replace text in a specific range with new content.
-
-    Args:
-        start_line: Starting line (0-indexed)
-        start_col: Starting column (0-indexed)
-        end_line: Ending line (0-indexed)
-        end_col: Ending column (0-indexed)
-        content: New content to insert
-
-    Returns:
-        A message indicating success and showing diff
-    """
-    nvim: NvimConnection = ctx.request_context.lifespan_context.nvim
-    buffer_id = nvim.get_current_buffer()
-
-    # Get original content for diffing
-    original_lines = nvim.get_buffer_lines(buffer_id, 0, -1)
-
-    # Get the affected lines
-    affected_lines = nvim.get_buffer_lines(buffer_id, start_line, end_line + 1)
-
-    # Handle single line case
-    if start_line == end_line:
-        new_line = affected_lines[0][:start_col] + content + affected_lines[0][end_col:]
-        nvim.set_buffer_lines(buffer_id, start_line, start_line + 1, [new_line])
-    else:
-        # Handle multi-line case
-        first_line = affected_lines[0][:start_col] + content.split("\n")[0]
-        last_line = affected_lines[-1][end_col:]
-
-        content_lines = content.split("\n")
-        if len(content_lines) > 1:
-            middle_lines = content_lines[1:-1]
-            new_lines = [first_line] + middle_lines + [content_lines[-1] + last_line]
-        else:
-            new_lines = [first_line + last_line]
-
-        nvim.set_buffer_lines(buffer_id, start_line, end_line + 1, new_lines)
-
-    # Create a diff highlighting using Neovim's built-in diffing capability
-    nvim.execute_command("vnew")  # Create a new vertical split
-    temp_buffer_id = nvim.get_current_buffer()
-    nvim.set_buffer_lines(temp_buffer_id, 0, -1, original_lines)
-    nvim.execute_command("diffthis")  # Mark this buffer for diff
-
-    # Switch back to original buffer and mark for diff
-    nvim.execute_command("wincmd p")  # Go back to previous window
-    nvim.execute_command("diffthis")  # Mark original buffer for diff
-
-    return f"Replaced text from line {start_line + 1}, col {start_col + 1} to line {end_line + 1}, col {end_col + 1}. Diff view enabled."
-
-
-@server.tool()
-def toggle_diff_mode(ctx: Context, enable: bool = True) -> str:
-    """Toggle diff mode between current buffer and its previous state.
-
-    Args:
-        enable: True to enable diff mode, False to disable
-
-    Returns:
-        A message indicating the action taken
-    """
-    nvim: NvimConnection = ctx.request_context.lifespan_context.nvim
-
-    if enable:
-        # Create a snapshot of current buffer
-        buffer_id = nvim.get_current_buffer()
-        current_lines = nvim.get_buffer_lines(buffer_id, 0, -1)
-
-        # Create a new buffer for comparison
-        nvim.execute_command("vnew")
-        temp_buffer_id = nvim.get_current_buffer()
-        nvim.set_buffer_lines(temp_buffer_id, 0, -1, current_lines)
-
-        # Enable diff mode
-        nvim.execute_command("diffthis")
-        nvim.execute_command("wincmd p")  # Go back to previous window
-        nvim.execute_command("diffthis")
-
-        return "Diff mode enabled. Left buffer shows current state."
-    else:
-        # Disable diff mode
-        nvim.execute_command("diffoff!")
-        return "Diff mode disabled."
+#         return "Diff mode enabled. Left buffer shows current state."
+#     else:
+#         # Disable diff mode
+#         nvim.execute_command("diffoff!")
+#         nvim.diff_active = False
+#         nvim.diff_buffer_id = None
+#         return "Diff mode disabled."
 
 
 @server.tool()
@@ -513,3 +405,387 @@ def get_project_tree(ctx: Context) -> str:
     except Exception as e:
         logger.exception("Error executing git command")
         return f"Exception while executing git command: {str(e)}"
+
+
+@server.tool()
+def create_directory(ctx: Context, path: str) -> str:
+    """Create a new directory or ensure it exists in the project.
+
+    Args:
+        path: Relative or absolute path to the directory to create
+
+    Returns:
+        A message indicating success or that the directory already exists
+    """
+    nvim: NvimConnection = ctx.request_context.lifespan_context.nvim
+
+    try:
+        # Determine if the path is absolute or relative
+        if os.path.isabs(path):
+            dir_path = Path(path)
+        else:
+            # Use the project directory as base for relative paths
+            if not nvim.project_dir:
+                return "Error: Project directory not initialized. Use initialize_neovim_connection first."
+            dir_path = Path(nvim.project_dir) / path
+
+        # Create the directory and any parent directories
+        dir_path.mkdir(parents=True, exist_ok=True)
+
+        return f"Directory created/verified at: {dir_path}"
+    except Exception as e:
+        logger.exception("Error creating directory")
+        return f"Error creating directory: {str(e)}"
+
+
+@server.tool()
+def create_file(ctx: Context, path: str, content: str = "") -> str:
+    """Create a new file with optional content in the project.
+
+    Args:
+        path: Relative or absolute path to the file to create
+        content: Optional content to write to the file
+
+    Returns:
+        A message indicating success or failure
+    """
+    nvim: NvimConnection = ctx.request_context.lifespan_context.nvim
+
+    try:
+        # Determine if the path is absolute or relative
+        if os.path.isabs(path):
+            file_path = Path(path)
+        else:
+            # Use the project directory as base for relative paths
+            if not nvim.project_dir:
+                return "Error: Project directory not initialized. Use initialize_neovim_connection first."
+            file_path = Path(nvim.project_dir) / path
+
+        # Create parent directories if they don't exist
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Write content to the file
+        file_path.write_text(content)
+
+        return f"File created at: {file_path}"
+    except Exception as e:
+        logger.exception("Error creating file")
+        return f"Error creating file: {str(e)}"
+
+
+@server.tool()
+def delete_file(ctx: Context, path: str, force: bool = False) -> str:
+    """Delete a file from the project.
+
+    Args:
+        path: Relative or absolute path to the file to delete
+        force: If True, don't raise an error if the file doesn't exist
+
+    Returns:
+        A message indicating success or failure
+    """
+    nvim: NvimConnection = ctx.request_context.lifespan_context.nvim
+
+    try:
+        # Determine if the path is absolute or relative
+        if os.path.isabs(path):
+            file_path = Path(path)
+        else:
+            # Use the project directory as base for relative paths
+            if not nvim.project_dir:
+                return "Error: Project directory not initialized. Use initialize_neovim_connection first."
+            file_path = Path(nvim.project_dir) / path
+
+        if not str(file_path.absolute()).startswith(nvim.project_dir):
+            return f"Error: The file to delete must be under {nvim.project_dir}"
+
+        # Check if file exists
+        if not file_path.exists():
+            if force:
+                return f"File {file_path} does not exist, no action taken."
+            else:
+                return f"Error: File {file_path} does not exist."
+
+        # Delete the file
+        file_path.unlink()
+
+        return f"File deleted: {file_path}"
+    except Exception as e:
+        logger.exception("Error deleting file")
+        return f"Error deleting file: {str(e)}"
+
+
+@server.tool()
+def delete_directory(ctx: Context, path: str, recursive: bool = False) -> str:
+    """Delete a directory from the project.
+
+    Args:
+        path: Relative or absolute path to the directory to delete
+        recursive: If True, recursively delete the directory and its contents
+
+    Returns:
+        A message indicating success or failure
+    """
+    nvim: NvimConnection = ctx.request_context.lifespan_context.nvim
+
+    try:
+        # Determine if the path is absolute or relative
+        if os.path.isabs(path):
+            dir_path = Path(path)
+        else:
+            # Use the project directory as base for relative paths
+            if not nvim.project_dir:
+                return "Error: Project directory not initialized. Use initialize_neovim_connection first."
+            dir_path = Path(nvim.project_dir) / path
+
+        if not str(dir_path.absolute()).startswith(nvim.project_dir):
+            return f"Error: The directory to delete must be under {nvim.project_dir}"
+
+        # Check if directory exists
+        if not dir_path.exists():
+            return f"Error: Directory {dir_path} does not exist."
+
+        # Delete the directory
+        if recursive:
+            shutil.rmtree(dir_path)
+        else:
+            dir_path.rmdir()  # Will fail if directory is not empty
+
+        return f"Directory deleted: {dir_path}"
+    except Exception as e:
+        logger.exception("Error deleting directory")
+        return f"Error deleting directory: {str(e)}"
+
+
+@server.tool()
+def list_directory_contents(ctx: Context, path: str = ".") -> list | str:
+    """List contents of a directory in the project.
+
+    Args:
+        path: Relative or absolute path to the directory to list
+
+    Returns:
+        A list of dictionaries with file/directory information or a string containing describing any errors ocurred during execution.
+    """
+    nvim: NvimConnection = ctx.request_context.lifespan_context.nvim
+
+    try:
+        # Determine if the path is absolute or relative
+        if os.path.isabs(path):
+            dir_path = Path(path)
+        else:
+            # Use the project directory as base for relative paths
+            if not nvim.project_dir:
+                return "Error: Project directory not initialized. Use initialize_neovim_connection first."
+            dir_path = Path(nvim.project_dir) / path
+
+        # Check if directory exists
+        if not dir_path.exists():
+            return f"Error: Directory {dir_path} does not exist."
+
+        # List contents of the directory
+        contents = []
+        for item in dir_path.iterdir():
+            contents.append(
+                {
+                    "name": item.name,
+                    "path": str(item),
+                    "type": "directory" if item.is_dir() else "file",
+                    "size": item.stat().st_size if item.is_file() else None,
+                }
+            )
+
+        return contents
+    except Exception as e:
+        logger.exception("Error listing directory contents")
+        return f"Error listing directory contents: {str(e)}"
+
+
+@server.tool()
+def read_file_content(ctx: Context, path: str) -> str:
+    """Read content of a file in the project.
+
+    Args:
+        path: Relative or absolute path to the file to read
+
+    Returns:
+        The content of the file as a string
+    """
+    nvim: NvimConnection = ctx.request_context.lifespan_context.nvim
+
+    try:
+        # Determine if the path is absolute or relative
+        if os.path.isabs(path):
+            file_path = Path(path)
+        else:
+            # Use the project directory as base for relative paths
+            if not nvim.project_dir:
+                return "Error: Project directory not initialized. Use initialize_neovim_connection first."
+            file_path = Path(nvim.project_dir) / path
+
+        # Check if file exists
+        if not file_path.exists():
+            return f"Error: File {file_path} does not exist."
+
+        # Read the file content
+        content = file_path.read_text()
+
+        return content
+    except Exception as e:
+        logger.exception("Error reading file content")
+        return f"Error reading file content: {str(e)}"
+
+
+@server.tool()
+def open_file_in_neovim(ctx: Context, path: str) -> str:
+    """Open a file in the Neovim instance.
+
+    Args:
+        path: Relative or absolute path to the file to open
+
+    Returns:
+        A message indicating success or failure
+    """
+    nvim: NvimConnection = ctx.request_context.lifespan_context.nvim
+
+    try:
+        # Determine if the path is absolute or relative
+        if os.path.isabs(path):
+            file_path = Path(path)
+        else:
+            # Use the project directory as base for relative paths
+            if not nvim.project_dir:
+                return "Error: Project directory not initialized. Use initialize_neovim_connection first."
+            file_path = Path(nvim.project_dir) / path
+
+        # Check if file exists
+        if not file_path.exists():
+            return f"Error: File {file_path} does not exist."
+
+        # Open the file in Neovim
+        nvim.execute_command(f"edit {file_path}")
+
+        return f"File opened in Neovim: {file_path}"
+    except Exception as e:
+        logger.exception("Error opening file in Neovim")
+        return f"Error opening file in Neovim: {str(e)}"
+
+
+@server.tool()
+def update_with_context(
+    ctx: Context, before_context: str, content: str, after_context: str
+) -> str:
+    """Update text using context before and after the target location.
+
+    IMPORTANT: The before_context and after_context strings are preserved in the output.
+    Only the text between them is replaced with the new content. These strings serve both
+    as search anchors and as boundaries that remain unchanged during the edit.
+
+    Make sure to include any new lines, tabs and spaces that make the result valid.
+
+    You must call this tool as many times as blocks of code you want to update.
+
+    Args:
+        before_context: Text immediately before the target location (preserved in output)
+        content: New content to insert between the context boundaries
+        after_context: Text immediately after the target location (preserved in output)
+
+    Returns:
+        A message describing the update
+    """
+    nvim: NvimConnection = ctx.request_context.lifespan_context.nvim
+    buffer_id = nvim.get_current_buffer()
+
+    # Get current content
+    current_lines = nvim.get_buffer_lines(buffer_id, 0, -1)
+    current_content = "\n".join(current_lines)
+
+    # Store original content for the first call only
+    original_lines = ""
+    if not nvim.diff_active:
+        original_lines = current_lines
+    else:
+        # For subsequent calls, we'll keep the original buffer intact
+        # and just update the current buffer
+        pass
+
+    # Perform the replacement
+    new_content = substitute_within_context(
+        before_context, after_context, current_content, content
+    )
+
+    if new_content == current_content:
+        return "No changes made - replacement text identical to original"
+
+    # Update the buffer
+    new_lines = new_content.split("\n")
+    nvim.set_buffer_lines(buffer_id, 0, -1, new_lines)
+
+    # Handle diff view based on whether diff is already active
+    if not nvim.diff_active:
+        # First call - create a diff view
+        nvim.execute_command("vnew")  # Create a new vertical split
+        temp_buffer_id = nvim.get_current_buffer()
+        nvim.set_buffer_lines(temp_buffer_id, 0, -1, original_lines)
+        nvim.execute_command("diffthis")  # Mark this buffer for diff
+
+        # Switch back to original buffer and mark for diff
+        nvim.execute_command("wincmd p")  # Go back to previous window
+        nvim.execute_command("diffthis")  # Mark original buffer for diff
+
+        # Update the diff flag and store buffer ID
+        nvim.diff_active = True
+        nvim.diff_buffer_id = temp_buffer_id
+
+        return f"Updated content between '{before_context}' and '{after_context}' with diff view enabled"
+    else:
+        # Subsequent calls - diff is already active, just update the current buffer
+        nvim.execute_command("diffupdate")  # Update the diff highlighting
+        return f"Updated content between '{before_context}' and '{after_context}', diff view updated"
+
+
+def substitute_within_context(
+    before_context: str, after_context: str, current_content: str, new_content: str
+) -> str:
+    """Replace content between two context markers in a string.
+
+    This function performs a targeted replacement within a larger text by using
+    surrounding context as anchors. It preserves the context markers themselves
+    and only replaces the content between them.
+
+    The function works by:
+    1. Creating a regex pattern using the escaped before and after contexts
+    2. Finding all text between these contexts using a non-greedy match
+    3. Replacing only that content while preserving the context markers
+
+    Args:
+        before_context: Text that appears immediately before the content to replace
+        after_context: Text that appears immediately after the content to replace
+        current_content: The full text to search within
+        new_content: The new content to insert between the context markers
+
+    Returns:
+        The modified text with content between contexts replaced, or an error message
+        if the context markers couldn't be found
+    """
+    # Handle edge case where both contexts are empty
+    if before_context == "" and after_context == "":
+        return new_content
+
+    # Find the target location using context
+    before_escaped = re.escape(before_context)
+    after_escaped = re.escape(after_context)
+    target_pattern = f"{before_escaped}(.*?){after_escaped}"
+
+    if not re.search(target_pattern, current_content, re.DOTALL):
+        logger.error(f"Pattern not found: {target_pattern}")
+        return f"Error: Could not find text between '{before_context}' and '{after_context}'"
+
+    new_content = re.sub(
+        target_pattern,
+        f"{before_context}{new_content}{after_context}",
+        current_content,
+        flags=re.DOTALL,
+    )
+
+    return new_content
