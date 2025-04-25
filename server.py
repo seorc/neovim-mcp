@@ -677,13 +677,19 @@ def update_with_context(
 ) -> str:
     """Update text using context before and after the target location.
 
+    This tool provides precision editing by using surrounding text as anchors to locate
+    where changes should be made. It's particularly useful for targeted updates in
+    code files, configuration files, or text documents.
+
     IMPORTANT: The before_context and after_context strings are preserved in the output.
     Only the text between them is replaced with the new content. These strings serve both
     as search anchors and as boundaries that remain unchanged during the edit.
 
-    Make sure to include any new lines, tabs and spaces that make the result valid.
+    The first call to this tool will automatically create a diff view showing the changes.
+    Subsequent calls will update the diff view to reflect additional changes.
 
-    You must call this tool as many times as blocks of code you want to update.
+    Make sure to include any new lines, tabs and spaces that make the result valid.
+    For code files, pay special attention to indentation and line breaks.
 
     Args:
         before_context: Text immediately before the target location (preserved in output)
@@ -691,8 +697,15 @@ def update_with_context(
         after_context: Text immediately after the target location (preserved in output)
 
     Returns:
-        A message describing the update
+        A message describing the update and diff view status
+
+    Examples:
+        To replace a function body while keeping the signature and closing brace:
+        - before_context = "def my_function():\n    "
+        - content = "# New implementation\n    return True"
+        - after_context = "\n\n"
     """
+
     nvim: NvimConnection = ctx.request_context.lifespan_context.nvim
     buffer_id = nvim.get_current_buffer()
 
