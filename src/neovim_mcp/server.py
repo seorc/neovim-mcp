@@ -565,40 +565,39 @@ def open_file_in_neovim(ctx: Context, path: str) -> str:
 
 
 @server.tool()
-def update_with_context(
-    ctx: Context, before_context: str, content: str, after_context: str
-) -> str:
-    """Update text using context before and after the target location.
+def update_with_context(ctx: Context, previous_content: str, new_content: str) -> dict:
+    """Update text by matching and replacing a block of content.
 
-    This tool provides precision editing by using surrounding text as anchors to locate
-    where changes should be made. It's particularly useful for targeted updates in
-    code files, configuration files, or text documents.
+    This tool provides precision editing by matching a specific block of text
+    and replacing it with new content. It's particularly useful for targeted updates
+    in code files, configuration files, or text documents.
 
-    IMPORTANT: The before_context and after_context strings are preserved in the output.
-    Only the text between them is replaced with the new content. These strings serve both
-    as search anchors and as boundaries that remain unchanged during the edit.
+    IMPORTANT:
+    1. The previous_content must exist in the buffer and be unique enough to match
+       exactly one occurrence.
+    2. The new_content should contain the updated version with the same surrounding
+       context to ensure proper placement.
+    3. If multiple occurrences of previous_content are found, the function will raise
+       an error requesting more specific context.
 
-    The first call to this tool will automatically create a diff view showing the changes.
-    Subsequent calls will update the diff view to reflect additional changes.
-
-    Make sure to include any new lines, tabs and spaces that make the result valid.
-    For code files, pay special attention to indentation and line breaks.
+    Make sure to include enough surrounding context in both the previous_content
+    and new_content to ensure a unique match. For code files, pay special attention
+    to indentation and line breaks.
 
     Args:
-        before_context: Text immediately before the target location (preserved in output)
-        content: New content to insert between the context boundaries
-        after_context: Text immediately after the target location (preserved in output)
+        previous_content: A unique block of text to be replaced
+        new_content: The new content to replace the previous content with
 
     Returns:
-        A message describing the update and diff view status
+        A dictionary with:
+        - message: A description of the update operation
+        - updated_content: The complete content of the buffer after the update
 
     Examples:
-        To replace a function body while keeping the signature and closing brace:
-        - before_context = "def my_function():\n    "
-        - content = "# New implementation\n    return True"
-        - after_context = "\n\n"
+        To replace a function:
+        - previous_content = "def my_function():\n    return False\n"
+        - new_content = "def my_function():\n    return True\n"
     """
-
     nvim: NvimConnection = ctx.request_context.lifespan_context.nvim
     buffer_id = nvim.get_current_buffer()
 
@@ -606,97 +605,84 @@ def update_with_context(
     current_lines = nvim.get_buffer_lines(buffer_id, 0, -1)
     current_content = "\n".join(current_lines)
 
-    # Store original content for the first call only
-    original_lines = ""
-    if not nvim.diff_active:
-        original_lines = current_lines
-    else:
-        # For subsequent calls, we'll keep the original buffer intact
-        # and just update the current buffer
-        pass
-
     # Perform the replacement
-    new_content = replace_within_context(
-        before_context, after_context, current_content, content
+    # try:
+    new_buffer_content = replace_with_context(
+        current_content, previous_content, new_content
     )
+    # except McpError as e:
+    #     return {"message": e.data.message, "updated_content": current_content}
 
-    if new_content == current_content:
-        return "No changes made - replacement text identical to original"
+    if new_buffer_content == current_content:
+        return {
+            "message": "No changes made - replacement text identical to original",
+            "updated_content": current_content,
+        }
 
     # Update the buffer
-    new_lines = new_content.split("\n")
+    new_lines = new_buffer_content.split("\n")
     nvim.set_buffer_lines(buffer_id, 0, -1, new_lines)
 
-    # Handle diff view based on whether diff is already active
-    if not nvim.diff_active:
-        # First call - create a diff view
-        nvim.execute_command("vnew")  # Create a new vertical split
-        temp_buffer_id = nvim.get_current_buffer()
-        nvim.set_buffer_lines(temp_buffer_id, 0, -1, original_lines)
-        nvim.execute_command("diffthis")  # Mark this buffer for diff
-
-        # Switch back to original buffer and mark for diff
-        nvim.execute_command("wincmd p")  # Go back to previous window
-        nvim.execute_command("diffthis")  # Mark original buffer for diff
-
-        # Update the diff flag and store buffer ID
-        nvim.diff_active = True
-        nvim.diff_buffer_id = temp_buffer_id
-
-        return f"Updated content between '{before_context}' and '{after_context}' with diff view enabled"
-    else:
-        # Subsequent calls - diff is already active, just update the current buffer
-        nvim.execute_command("diffupdate")  # Update the diff highlighting
-        return f"Updated content between '{before_context}' and '{after_context}', diff view updated"
+    return {
+        "message": "Content updated successfully",
+        "updated_content": new_buffer_content,
+    }
 
 
-def replace_within_context(
-    before_context: str, after_context: str, current_content: str, new_content: str
+def replace_with_context(
+    current_buffer_content: str, previous_content: str, new_content: str
 ) -> str:
-    """Replace content between two context markers in a string.
+    """Replace a specific block of text in the buffer content.
 
-    This function performs a targeted replacement within a larger text by using
-    surrounding context as anchors. It preserves the context markers themselves
-    and only replaces the content between them.
-
-    The function works by:
-    1. Creating a regex pattern using the escaped before and after contexts
-    2. Finding all text between these contexts using a non-greedy match
-    3. Replacing only that content while preserving the context markers
+    This function matches a specific block of text in the current buffer content
+    and replaces it with new content. The previous_content must be unique
+    enough to match exactly one occurrence.
 
     Args:
-        before_context: Text that appears immediately before the content to replace
-        after_context: Text that appears immediately after the content to replace
-        current_content: The full text to search within
-        new_content: The new content to insert between the context markers
+        current_buffer_content: The full text content of the current buffer
+        previous_content: A unique block of text to be replaced
+        new_content: The new content to replace the previous content with
 
     Returns:
-        The modified text with content between contexts replaced, or an error message
-        if the context markers couldn't be found
+        The modified text with the specified content replaced
+
+    Raises:
+        cpError: If the previous_content can't be found, or if multiple matches are found
     """
-    # Handle edge case where both contexts are empty
-    if before_context == "" and after_context == "":
-        return new_content
+    # Escape the previous content for use in regex
+    previous_content_escaped = re.escape(previous_content)
 
-    # Find the target location using context
-    before_escaped = re.escape(before_context)
-    after_escaped = re.escape(after_context)
-    target_pattern = f"{before_escaped}(.*?){after_escaped}"
+    # Find all occurrences of the previous content
+    matches = list(
+        re.finditer(previous_content_escaped, current_buffer_content, re.DOTALL)
+    )
 
-    if not re.search(target_pattern, current_content, re.DOTALL):
-        logger.error(f"Pattern not found: {target_pattern}")
+    # Check if there are no matches
+    if not matches:
+        logger.error("Previous content not found")
         raise McpError(
             ErrorData(
                 code=INVALID_PARAMS,
-                message=f"Could not find text between '{before_context}' and '{after_context}'",
+                message="Could not find the specified content in the buffer. Please provide more accurate previous content.",
             )
         )
 
-    new_content = re.sub(
-        target_pattern,
-        f"{before_context}{new_content}{after_context}",
-        current_content,
-        flags=re.DOTALL,
-    )
+    # Check if there are multiple matches
+    if len(matches) > 1:
+        logger.error(f"Multiple matches found: {len(matches)}")
+        raise McpError(
+            ErrorData(
+                code=INVALID_PARAMS,
+                message=f"Found {len(matches)} occurrences of the specified content. Please provide more specific context to ensure a unique match.",
+            )
+        )
 
-    return new_content
+    # Get the match details
+    match = matches[0]
+    start = match.start()
+    end = match.end()
+
+    # Construct the new buffer content
+    result = current_buffer_content[:start] + new_content + current_buffer_content[end:]
+
+    return result
