@@ -2,14 +2,14 @@ import unittest
 import logging
 
 # Import the function we want to test
-from neovim_mcp.server import substitute_within_context
+from neovim_mcp.server import replace_within_context
 
 # Set up logging for tests
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-class TestSubstituteWithinContext(unittest.TestCase):
+class TestReplaceWithinContext(unittest.TestCase):
     """Test cases for the substitute_within_context function."""
 
     def test_basic_replacement(self):
@@ -19,7 +19,7 @@ class TestSubstituteWithinContext(unittest.TestCase):
         current_content = "Hello, world!"
         new_content = "Python"
 
-        result = substitute_within_context(
+        result = replace_within_context(
             before_context, after_context, current_content, new_content
         )
 
@@ -33,7 +33,7 @@ class TestSubstituteWithinContext(unittest.TestCase):
         new_content = "REPLACED"
 
         # By default, re.sub replaces all occurrences
-        result = substitute_within_context(
+        result = replace_within_context(
             before_context, after_context, current_content, new_content
         )
 
@@ -46,7 +46,7 @@ class TestSubstituteWithinContext(unittest.TestCase):
         current_content = "def example():\n    print('hello')\n    return 42"
         new_content = "print('Hello, world!')"
 
-        result = substitute_within_context(
+        result = replace_within_context(
             before_context, after_context, current_content, new_content
         )
 
@@ -61,7 +61,7 @@ class TestSubstituteWithinContext(unittest.TestCase):
         current_content = "The item price: $99.00 is now on sale"
         new_content = "149"
 
-        result = substitute_within_context(
+        result = replace_within_context(
             before_context, after_context, current_content, new_content
         )
 
@@ -74,7 +74,7 @@ class TestSubstituteWithinContext(unittest.TestCase):
         current_content = "This is an <empty></empty> test"
         new_content = "NOT EMPTY"
 
-        result = substitute_within_context(
+        result = replace_within_context(
             before_context, after_context, current_content, new_content
         )
 
@@ -88,7 +88,7 @@ class TestSubstituteWithinContext(unittest.TestCase):
         new_content = "Won't be inserted"
 
         # Current behavior returns an error message - this test verifies that behavior
-        result = substitute_within_context(
+        result = replace_within_context(
             before_context, after_context, current_content, new_content
         )
 
@@ -104,7 +104,7 @@ class TestSubstituteWithinContext(unittest.TestCase):
         current_content = "<outer><inner>original</inner></outer>"
         new_content = "replaced"
 
-        result = substitute_within_context(
+        result = replace_within_context(
             before_context, after_context, current_content, new_content
         )
 
@@ -117,7 +117,7 @@ class TestSubstituteWithinContext(unittest.TestCase):
         current_content = "<tag>first</tag><tag>second</tag>"
         new_content = "REPLACED"
 
-        result = substitute_within_context(
+        result = replace_within_context(
             before_context, after_context, current_content, new_content
         )
 
@@ -131,7 +131,7 @@ class TestSubstituteWithinContext(unittest.TestCase):
         new_content = "NEW"
 
         # The function should match greedily by default with (.*?)
-        result = substitute_within_context(
+        result = replace_within_context(
             before_context, after_context, current_content, new_content
         )
 
@@ -147,7 +147,7 @@ class TestSubstituteWithinContext(unittest.TestCase):
         )
         new_content = "REPLACED"
 
-        result = substitute_within_context(
+        result = replace_within_context(
             before_context, after_context, current_content, new_content
         )
 
@@ -167,7 +167,7 @@ class TestSubstituteWithinContextEdgeCases(unittest.TestCase):
         new_content = "REPLACEMENT"
 
         # This would match and replace the entire content with current implementation
-        result = substitute_within_context(
+        result = replace_within_context(
             before_context, after_context, current_content, new_content
         )
 
@@ -181,7 +181,7 @@ class TestSubstituteWithinContextEdgeCases(unittest.TestCase):
         current_content = "start---middle---end"
         new_content = "NEW"
 
-        result = substitute_within_context(
+        result = replace_within_context(
             before_context, after_context, current_content, new_content
         )
 
@@ -195,7 +195,7 @@ class TestSubstituteWithinContextEdgeCases(unittest.TestCase):
         current_content = "a+b*c_TEST_(d|e)^f"
         new_content = "REPLACED"
 
-        result = substitute_within_context(
+        result = replace_within_context(
             before_context, after_context, current_content, new_content
         )
 
@@ -208,7 +208,7 @@ class TestSubstituteWithinContextEdgeCases(unittest.TestCase):
         current_content = "Here is some code:\n```python\ndef hello():\n    print('Hello')\n```\nEnd of code."
         new_content = "def hello_world():\n    print('Hello, world!')"
 
-        result = substitute_within_context(
+        result = replace_within_context(
             before_context, after_context, current_content, new_content
         )
 

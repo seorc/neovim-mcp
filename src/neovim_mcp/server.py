@@ -11,6 +11,8 @@ from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from mcp.server.fastmcp import FastMCP, Context
+from mcp.shared.exceptions import McpError
+from mcp.types import INTERNAL_ERROR, INVALID_PARAMS, ErrorData
 
 
 logger = logging.getLogger(__name__)
@@ -195,19 +197,6 @@ def initialize_neovim_connection(ctx: Context, path: str) -> str:
     nvim: NvimConnection = ctx.request_context.lifespan_context.nvim
     nvim.set_socket_path(path)
     return f"Neovim configured correctly at {path}"
-
-
-@server.resource("greeting://{name}")
-def get_greeting(name: str) -> str:
-    """Get a personalized greeting randomly chosen from five options"""
-    greetings = [
-        f"Hello {name}!",
-        f"Hi there, {name}!",
-        f"Greetings, {name}!",
-        f"Welcome, {name}!",
-        f"Nice to meet you, {name}!",
-    ]
-    return random.choice(greetings)
 
 
 @server.tool()
@@ -627,7 +616,7 @@ def update_with_context(
         pass
 
     # Perform the replacement
-    new_content = substitute_within_context(
+    new_content = replace_within_context(
         before_context, after_context, current_content, content
     )
 
@@ -661,7 +650,7 @@ def update_with_context(
         return f"Updated content between '{before_context}' and '{after_context}', diff view updated"
 
 
-def substitute_within_context(
+def replace_within_context(
     before_context: str, after_context: str, current_content: str, new_content: str
 ) -> str:
     """Replace content between two context markers in a string.
@@ -696,7 +685,12 @@ def substitute_within_context(
 
     if not re.search(target_pattern, current_content, re.DOTALL):
         logger.error(f"Pattern not found: {target_pattern}")
-        return f"Error: Could not find text between '{before_context}' and '{after_context}'"
+        raise McpError(
+            ErrorData(
+                code=INVALID_PARAMS,
+                message=f"Could not find text between '{before_context}' and '{after_context}'",
+            )
+        )
 
     new_content = re.sub(
         target_pattern,
