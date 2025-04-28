@@ -185,31 +185,6 @@ server = FastMCP("neovim", lifespan=app_lifespan)
 
 
 @server.tool()
-def reset_diff_state(ctx: Context) -> str:
-    """Reset and clean up any active diff views.
-
-    This tool ensures that all diff views are closed and the diff state is reset,
-    useful for cleaning up after multiple update_with_context calls.
-
-    Returns:
-        A message indicating the action taken
-    """
-    nvim: NvimConnection = ctx.request_context.lifespan_context.nvim
-
-    # Turn off diff mode in all windows
-    nvim.execute_command("diffoff!")
-
-    # Close all other windows except the current one
-    nvim.execute_command("only")
-
-    # Reset the diff state
-    nvim.diff_active = False
-    nvim.diff_buffer_id = None
-
-    return "Diff state reset and all diff windows closed"
-
-
-@server.tool()
 def initialize_neovim_connection(ctx: Context, path: str) -> str:
     """Initialize the project path.
 
@@ -271,46 +246,6 @@ def get_current_buffer_id(ctx: Context) -> int:
     buffer_id = nvim.get_current_buffer()
     logger.debug(f"Current buffer ID: {buffer_id}")
     return buffer_id
-
-
-# @server.tool()
-# def toggle_diff_mode(ctx: Context, enable: bool = True) -> str:
-#     """Toggle diff mode between current buffer and its previous state.
-
-#     Args:
-#         enable: True to enable diff mode, False to disable
-
-#     Returns:
-#         A message indicating the action taken
-#     """
-#     nvim: NvimConnection = ctx.request_context.lifespan_context.nvim
-
-#     if enable:
-#         # Create a snapshot of current buffer
-#         buffer_id = nvim.get_current_buffer()
-#         current_lines = nvim.get_buffer_lines(buffer_id, 0, -1)
-
-#         # Create a new buffer for comparison
-#         nvim.execute_command("vnew")
-#         temp_buffer_id = nvim.get_current_buffer()
-#         nvim.set_buffer_lines(temp_buffer_id, 0, -1, current_lines)
-
-#         # Enable diff mode
-#         nvim.execute_command("diffthis")
-#         nvim.execute_command("wincmd p")  # Go back to previous window
-#         nvim.execute_command("diffthis")
-
-#         # Set the flag and store the diff buffer ID
-#         nvim.diff_active = True
-#         nvim.diff_buffer_id = temp_buffer_id
-
-#         return "Diff mode enabled. Left buffer shows current state."
-#     else:
-#         # Disable diff mode
-#         nvim.execute_command("diffoff!")
-#         nvim.diff_active = False
-#         nvim.diff_buffer_id = None
-#         return "Diff mode disabled."
 
 
 @server.tool()
@@ -405,37 +340,6 @@ def get_project_tree(ctx: Context) -> str:
     except Exception as e:
         logger.exception("Error executing git command")
         return f"Exception while executing git command: {str(e)}"
-
-
-@server.tool()
-def create_directory(ctx: Context, path: str) -> str:
-    """Create a new directory or ensure it exists in the project.
-
-    Args:
-        path: Relative or absolute path to the directory to create
-
-    Returns:
-        A message indicating success or that the directory already exists
-    """
-    nvim: NvimConnection = ctx.request_context.lifespan_context.nvim
-
-    try:
-        # Determine if the path is absolute or relative
-        if os.path.isabs(path):
-            dir_path = Path(path)
-        else:
-            # Use the project directory as base for relative paths
-            if not nvim.project_dir:
-                return "Error: Project directory not initialized. Use initialize_neovim_connection first."
-            dir_path = Path(nvim.project_dir) / path
-
-        # Create the directory and any parent directories
-        dir_path.mkdir(parents=True, exist_ok=True)
-
-        return f"Directory created/verified at: {dir_path}"
-    except Exception as e:
-        logger.exception("Error creating directory")
-        return f"Error creating directory: {str(e)}"
 
 
 @server.tool()

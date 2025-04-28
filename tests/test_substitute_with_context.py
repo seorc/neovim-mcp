@@ -2,7 +2,7 @@ import unittest
 import logging
 
 # Import the function we want to test
-from server import substitute_within_context
+from neovim_mcp.server import substitute_within_context
 
 # Set up logging for tests
 logging.basicConfig(level=logging.INFO)

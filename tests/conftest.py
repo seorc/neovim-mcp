@@ -7,7 +7,7 @@ import time
 import signal
 from pathlib import Path
 
-from server import NvimConnection, FastMCP
+from neovim_mcp.server import NvimConnection
 
 
 @pytest.fixture(scope="session")

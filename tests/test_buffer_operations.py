@@ -1,7 +1,7 @@
 from unittest.mock import MagicMock
 from pathlib import Path
 
-import server  # Import the module with our tools
+from neovim_mcp import server  # Import the module with our tools
 
 
 class TestReadBufferOperations:
