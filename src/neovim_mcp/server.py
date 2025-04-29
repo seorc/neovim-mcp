@@ -606,12 +606,12 @@ def update_with_context(ctx: Context, previous_content: str, new_content: str) -
     current_content = "\n".join(current_lines)
 
     # Perform the replacement
-    # try:
-    new_buffer_content = replace_with_context(
-        current_content, previous_content, new_content
-    )
-    # except McpError as e:
-    #     return {"message": e.data.message, "updated_content": current_content}
+    try:
+        new_buffer_content = replace_with_context(
+            current_content, previous_content, new_content
+        )
+    except McpError as e:
+        return {"message": e.error.message, "updated_content": current_content}
 
     if new_buffer_content == current_content:
         return {
@@ -647,8 +647,26 @@ def replace_with_context(
         The modified text with the specified content replaced
 
     Raises:
-        cpError: If the previous_content can't be found, or if multiple matches are found
+        McpError: If the previous_content can't be found, or if multiple matches are found
     """
+    # Handle edge cases first
+    if previous_content == "":
+        raise McpError(
+            ErrorData(
+                code=INVALID_PARAMS,
+                message="Previous content cannot be empty as it would create ambiguous matches.",
+            )
+        )
+
+    # Special case: If current buffer is empty, we can't match anything
+    if current_buffer_content == "":
+        raise McpError(
+            ErrorData(
+                code=INVALID_PARAMS,
+                message="Cannot find content to replace in an empty buffer.",
+            )
+        )
+
     # Escape the previous content for use in regex
     previous_content_escaped = re.escape(previous_content)
 
