@@ -12,7 +12,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from mcp.server.fastmcp import FastMCP, Context
 from mcp.shared.exceptions import McpError
-from mcp.types import INTERNAL_ERROR, INVALID_PARAMS, ErrorData
+from mcp.types import INVALID_PARAMS, ErrorData
 
 
 logger = logging.getLogger(__name__)
@@ -70,6 +70,13 @@ class NvimConnection:
         request = msgpack.packb([0, req_id, method, params])
 
         logger.debug("Sending message: %s", [0, req_id, method, params])
+
+        if not self.sock:
+            raise RuntimeError("The socket is not set")
+
+        if not request:
+            raise RuntimeError("The request is not valid")
+
         self.sock.sendall(request)
 
         # Read response
@@ -176,7 +183,7 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
     try:
         # nvim = attach("socket", path="/tmp/neovim")
         yield AppContext(nvim=nvim)
-    except Exception as c:
+    except Exception:
         logger.exception("Failed")
     finally:
         # Cleanup on shutdown
