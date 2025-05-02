@@ -48,7 +48,3 @@ Notice the PROJECT_PATH must be the same the socket was created at. This ensures
 ⚠️ **EXPERIMENTAL** ⚠️
 
 This is an experimental project and not fully intended for production use. APIs may change without notice, and functionality is not guaranteed.
-
-## License
-
-[MIT](LICENSE)
