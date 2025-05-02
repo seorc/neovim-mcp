@@ -46,7 +46,7 @@ class NvimConnection:
         """Connect to the Neovim socket"""
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.sock.connect(self.socket_path)
-        self.sock.settimeout(1)  # Set a timeout of 5 seconds
+        self.sock.settimeout(1)  # Set a timeout of 1 seconds
         return self
 
     def close(self):
@@ -104,8 +104,6 @@ class NvimConnection:
             # Need more data
             logger.debug("Need more data, waiting for more chunks")
             raise
-            # finally:
-            #     logger.debug("Response from neovim: %s", full_response)
 
     def execute_command(self, cmd):
         """Execute a Vim command"""
@@ -181,7 +179,6 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
     nvim = NvimConnection()
     logger.debug("Creating lifespan objects")
     try:
-        # nvim = attach("socket", path="/tmp/neovim")
         yield AppContext(nvim=nvim)
     except Exception:
         logger.exception("Failed")
