@@ -200,6 +200,7 @@ def initialize_neovim_connection(ctx: Context, path: str) -> str:
     """
     nvim: NvimConnection = ctx.request_context.lifespan_context.nvim
     nvim.set_socket_path(path)
+    nvim.connect()
     return f"Neovim configured correctly at {path}"
 
 
@@ -569,7 +570,12 @@ def open_file_in_neovim(ctx: Context, path: str) -> str:
 
 
 @server.tool()
-def update_with_context(ctx: Context, previous_content: str, new_content: str) -> dict:
+def edit_content(
+    ctx: Context,
+    previous_content: str,
+    new_content: str,
+    work_on_empty_content: bool = False,
+) -> dict:
     """Update text by matching and replacing a block of content.
 
     This tool provides precision editing by matching a specific block of text
@@ -583,6 +589,7 @@ def update_with_context(ctx: Context, previous_content: str, new_content: str) -
        context to ensure proper placement.
     3. If multiple occurrences of previous_content are found, the function will raise
        an error requesting more specific context.
+    4. It is OK to pass an empty previous_content if the buffer is empty.
 
     Make sure to include enough surrounding context in both the previous_content
     and new_content to ensure a unique match. For code files, pay special attention
@@ -591,6 +598,7 @@ def update_with_context(ctx: Context, previous_content: str, new_content: str) -
     Args:
         previous_content: A unique block of text to be replaced
         new_content: The new content to replace the previous content with
+        work_on_empty_content: Make the edition even if the content is empty
 
     Returns:
         A dictionary with:
@@ -612,7 +620,10 @@ def update_with_context(ctx: Context, previous_content: str, new_content: str) -
     # Perform the replacement
     try:
         new_buffer_content = replace_with_context(
-            current_content, previous_content, new_content
+            current_content,
+            previous_content,
+            new_content,
+            work_on_empty_content=work_on_empty_content,
         )
     except McpError as e:
         return {"message": e.error.message, "updated_content": current_content}
@@ -634,7 +645,10 @@ def update_with_context(ctx: Context, previous_content: str, new_content: str) -
 
 
 def replace_with_context(
-    current_buffer_content: str, previous_content: str, new_content: str
+    current_buffer_content: str,
+    previous_content: str,
+    new_content: str,
+    work_on_empty_content: bool = False,
 ) -> str:
     """Replace a specific block of text in the buffer content.
 
@@ -654,7 +668,7 @@ def replace_with_context(
         McpError: If the previous_content can't be found, or if multiple matches are found
     """
     # Handle edge cases first
-    if previous_content == "":
+    if previous_content == "" and not work_on_empty_content:
         raise McpError(
             ErrorData(
                 code=INVALID_PARAMS,
@@ -663,7 +677,7 @@ def replace_with_context(
         )
 
     # Special case: If current buffer is empty, we can't match anything
-    if current_buffer_content == "":
+    if current_buffer_content == "" and not work_on_empty_content:
         raise McpError(
             ErrorData(
                 code=INVALID_PARAMS,

@@ -34,7 +34,7 @@ class TestEmptyBuffer(unittest.TestCase):
 
     def test_empty_previous_content(self):
         """Test behavior when previous content is empty.
-        
+
         Note: This is an edge case that might lead to replacing all content if not handled correctly.
         Empty string would match at the beginning of any content, which could lead to unexpected behavior.
         """
@@ -45,7 +45,7 @@ class TestEmptyBuffer(unittest.TestCase):
         # This should raise an error because empty content to match is ambiguous
         with self.assertRaises(McpError):
             replace_with_context(current_content, previous_content, new_content)
-            
+
     def test_both_contents_empty(self):
         """Test behavior when both previous and new content are empty."""
         current_content = "Hello, world!"
@@ -65,7 +65,3 @@ class TestEmptyBuffer(unittest.TestCase):
         # Should raise McpError - empty matches in empty content is ambiguous
         with self.assertRaises(McpError):
             replace_with_context(current_content, previous_content, new_content)
-
-
-if __name__ == "__main__":
-    unittest.main()
