@@ -20,7 +20,22 @@ logger.setLevel(level=logging.DEBUG)
 
 
 class NvimConnection:
-    """A minimal, synchronous connection to Neovim avoiding event loops"""
+    """
+    A minimal, synchronous connection to Neovim via socket.
+
+    This class provides a lightweight, synchronous interface to interact with Neovim
+    without relying on event loops. It handles socket communication using msgpack-rpc
+    protocol for sending commands and receiving responses.
+
+    Attributes:
+        sock: Socket connection to Neovim
+        project_dir: Base directory path of the project
+        socket_path: Full path to the Neovim socket
+        socket_name: Name of the Neovim socket file
+        request_id: Unique ID for msgpack-rpc requests
+        diff_active: Flag indicating if diff mode is active
+        diff_buffer_id: Reference to the buffer used in diff mode
+    """
 
     def __init__(self, socket_name: str = "neovim.socket"):
         self.sock = None
@@ -33,6 +48,21 @@ class NvimConnection:
         self.diff_buffer_id = None
 
     def set_socket_path(self, path: str):
+        """
+        Set the socket path for the Neovim connection.
+
+        This method configures the connection to use a specific socket path. It also
+        stores the project directory for later use in file operations.
+
+        Args:
+            path: Path to the directory containing the Neovim socket
+
+        Returns:
+            The provided path if successful
+
+        Raises:
+            FileNotFoundError: If the socket file doesn't exist at the specified path
+        """
         self.project_dir = path  # Store the project directory
         self.socket_path = str(Path(path) / self.socket_name)
         if os.path.exists(self.socket_path):
@@ -59,7 +89,24 @@ class NvimConnection:
             self.sock = None
 
     def _send_request(self, method, params):
-        """Send a msgpack-rpc request"""
+        """
+        Send a msgpack-rpc request to Neovim and get the response.
+
+        This method handles the low-level communication with Neovim using the msgpack-rpc
+        protocol. It sends a request with a unique ID and waits for a response.
+
+        Args:
+            method: The Neovim API method to call
+            params: List of parameters for the method
+
+        Returns:
+            The response data from Neovim
+
+        Raises:
+            RuntimeError: If the socket is not connected or request is invalid
+            socket.timeout: If receiving a response times out
+            msgpack.exceptions.OutOfData: If the received data is incomplete
+        """
         if not self.sock:
             self.connect()
 
@@ -144,8 +191,19 @@ class NvimConnection:
 
     def get_visual_selection(self):
         """
-        Get the line range of the current visual selection with the unusual format.
-        Returns a tuple of (start_line, end_line) in 0-indexed format.
+        Get the line range of the current visual selection in Neovim.
+
+        This method retrieves the starting and ending lines of the current visual
+        selection in Neovim. It handles the conversion between Neovim's 1-indexed line
+        numbers and the 0-indexed format used by the API. The method also ensures that
+        the start line is always less than or equal to the end line, regardless of
+        the selection direction.
+
+        Returns:
+            A tuple of (start_line, end_line) in 0-indexed format, sorted by position
+
+        Raises:
+            RuntimeError: If there's an error getting the visual selection
         """
         try:
             # Get position of the beginning of visual selection (mark '<)
@@ -155,10 +213,11 @@ class NvimConnection:
             visual_end_pos = self._send_request("nvim_call_function", ["getpos", ["v"]])
 
             # Extract line numbers (0-indexed for API consistency)
-            # In this unusual format, line numbers are at [3][1]
+            # In Neovim, getpos() returns [bufnum, lnum, col, off] where lnum is the line number
             start_line = cursor_pos[1] - 1  # Convert from 1-indexed to 0-indexed
             end_line = visual_end_pos[1] - 1  # End is exclusive for API purposes
 
+            # Always return lines in ascending order
             if start_line > end_line:
                 return (end_line, start_line)
 
@@ -174,7 +233,22 @@ class AppContext:
 
 @asynccontextmanager
 async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
-    """Manage application lifecycle with type-safe context"""
+    """
+    Manage the lifecycle of the application with proper context management.
+
+    This async context manager initializes necessary resources when the application
+    starts up and ensures proper cleanup when shutting down. It creates and manages
+    the NvimConnection instance that will be available throughout the application.
+
+    Args:
+        server: The FastMCP server instance
+
+    Yields:
+        AppContext: An object containing the application's context and resources
+
+    Raises:
+        Exception: Any exceptions during startup are logged
+    """
     # Initialize on startup
     nvim = NvimConnection()
     logger.debug("Creating lifespan objects")
@@ -206,6 +280,18 @@ def initialize_neovim_connection(ctx: Context, path: str) -> str:
 
 @server.tool()
 def read_buffer(ctx: Context):
+    """
+    Read the entire content of the current buffer.
+
+    This function retrieves all lines from the current buffer in the Neovim instance
+    and joins them into a single string with newlines.
+
+    Args:
+        ctx: The MCP context containing the request context
+
+    Returns:
+        The content of the current buffer as a string
+    """
     nvim: NvimConnection = ctx.request_context.lifespan_context.nvim
     buffer_id = nvim.get_current_buffer()
     logger.info(f"Reading buffer {buffer_id}")
@@ -660,6 +746,7 @@ def replace_with_context(
         current_buffer_content: The full text content of the current buffer
         previous_content: A unique block of text to be replaced
         new_content: The new content to replace the previous content with
+        work_on_empty_content: Make the edition even if the content is empty
 
     Returns:
         The modified text with the specified content replaced
